@@ -1,0 +1,27 @@
+# Layout definition for DataGuide 6 Misc/Custom ETF Constituent format
+# Already in normal (long) form. Used for: ETF constituent data.
+#
+# Cell coordinates are 0-indexed (row, col) from the top-left (A1) of the file.
+
+format_name: misc_etf
+format_category: misc          # timeseries | snapshot | misc
+format_orientation: long       # wide | long
+description: "Custom/misc format -- ETF constituent data, already in normal form"
+
+# Detection rules: all check_cell rules must pass.
+detection:
+  check_cell:
+    - { row: 0, col: 0, value: "Refresh" }
+    - { row: 1, col: 0, value: "ETF 구성종목" }
+  data_header_row: 5
+
+# Settings: each key maps to a cell coordinate.
+settings:
+  last_updated:  { row: 0, col: 1, parse: "strip_prefix:Last Updated:" }
+  data_category: { row: 1, col: 0 }
+  etf_code:      { row: 2, col: 1 }
+  etf_name:      { row: 2, col: 2 }
+  frequency:     { row: 3, col: 1 }   # e.g., 일간
+  sort_order:    { row: 3, col: 2 }   # e.g., 오름차순
+  period_start:  { row: 4, col: 1 }   # e.g., 20250101
+  period_end:    { row: 4, col: 2 }   # e.g., 최근일자(20260206)

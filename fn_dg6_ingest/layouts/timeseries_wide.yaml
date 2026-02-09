@@ -1,0 +1,36 @@
+# Layout definition for DataGuide 6 Time Series Wide format
+# Dates are spread across columns; rows are (code, item) pairs.
+# Used for: OHLCV, sales-consensus, and similar time series datasets.
+#
+# Cell coordinates are 0-indexed (row, col) from the top-left (A1) of the file.
+
+format_name: timeseries_wide
+format_category: timeseries    # timeseries | snapshot | misc
+format_orientation: wide       # wide | long
+description: "Time series wide format -- dates as columns, rows are (code, item) pairs"
+
+# Detection rules: all must pass for this layout to match.
+# check_cell rules verify exact cell content.
+# check_data_header_cols verifies that the data header row contains these columns.
+detection:
+  check_cell:
+    - { row: 0, col: 0, value: "Refresh" }
+  check_data_header_cols: ["코드", "코드명", "유형", "아이템코드", "아이템명", "집계주기"]
+  data_header_row: 8
+
+# Settings: each key maps to a cell coordinate.
+# parse modes:
+#   "raw" (default) -- take the cell value as-is
+#   "strip_prefix:<prefix>" -- strip a prefix string from the cell value
+#   "presence" -- true if the cell is non-empty, false otherwise
+settings:
+  last_updated:      { row: 0, col: 1, parse: "strip_prefix:Last Updated:" }
+  calendar_basis:    { row: 1, col: 0, parse: "presence" }
+  code_portfolio:    { row: 2, col: 1 }
+  frequency:         { row: 4, col: 1 }   # e.g., 일간
+  currency:          { row: 4, col: 2 }   # e.g., 원화
+  non_business_days: { row: 5, col: 1 }   # e.g., 제외
+  sort_order:        { row: 5, col: 2 }   # e.g., 오름차순
+  include_weekends:  { row: 6, col: 1 }   # e.g., 제외
+  period_start:      { row: 7, col: 1 }   # e.g., 20160101
+  period_end:        { row: 7, col: 2 }   # e.g., 최근일자(20260206)
