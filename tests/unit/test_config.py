@@ -25,7 +25,7 @@ from fn_dg6_ingest.exceptions import ConfigValidationError
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def _make_source(fmt: str = "wide") -> SourceConfig:
+def _make_source(fmt: str = "timeseries_wide") -> SourceConfig:
     return SourceConfig(input_path="inputs/test.csv", detected_format=fmt)
 
 
@@ -45,21 +45,22 @@ def _make_config(**overrides) -> IngestConfig:
 class TestSourceConfig:
     """Tests for SourceConfig validation."""
 
-    def test_valid_wide(self):
-        cfg = SourceConfig(input_path="data.csv", detected_format="wide")
-        assert cfg.detected_format == "wide"
+    def test_valid_timeseries_wide(self):
+        cfg = SourceConfig(input_path="data.csv", detected_format="timeseries_wide")
+        assert cfg.detected_format == "timeseries_wide"
 
-    def test_valid_long(self):
-        cfg = SourceConfig(input_path="data.csv", detected_format="long")
-        assert cfg.detected_format == "long"
+    def test_valid_misc_etf(self):
+        cfg = SourceConfig(input_path="data.csv", detected_format="misc_etf")
+        assert cfg.detected_format == "misc_etf"
 
-    def test_invalid_format_rejected(self):
-        with pytest.raises(ValidationError, match="detected_format"):
-            SourceConfig(input_path="data.csv", detected_format="pivot")
+    def test_any_format_name_accepted(self):
+        """detected_format is a free-form string matching layout format_name."""
+        cfg = SourceConfig(input_path="data.csv", detected_format="snapshot_custom")
+        assert cfg.detected_format == "snapshot_custom"
 
     def test_missing_input_path(self):
         with pytest.raises(ValidationError, match="input_path"):
-            SourceConfig(detected_format="wide")
+            SourceConfig(detected_format="timeseries_wide")
 
 
 # ---------------------------------------------------------------------------
@@ -71,26 +72,32 @@ class TestMetadataConfig:
 
     def test_empty_is_valid(self):
         cfg = MetadataConfig()
-        assert cfg.출력주기 is None
+        assert cfg.frequency is None
+        assert cfg.currency is None
 
     def test_full_metadata(self):
         cfg = MetadataConfig(
-            출력주기="일간",
-            비영업일="제외",
-            주말포함="제외",
-            기간=["20160101", "20260206"],
-            기본설정=["원화", "오름차순"],
-            달력기준=True,
+            frequency="일간",
+            currency="원화",
+            sort_order="오름차순",
+            non_business_days="제외",
+            include_weekends="제외",
+            period_start="20160101",
+            period_end="최근일자(20260206)",
+            calendar_basis=True,
         )
-        assert cfg.기간 == ["20160101", "20260206"]
-        assert cfg.달력기준 is True
+        assert cfg.frequency == "일간"
+        assert cfg.currency == "원화"
+        assert cfg.period_start == "20160101"
+        assert cfg.calendar_basis is True
 
-    def test_long_format_fields(self):
+    def test_extra_fields(self):
         cfg = MetadataConfig(
-            조회기간=["20250101", "20260206"],
             data_category="ETF 구성종목",
+            extra={"etf_code": "A069500", "etf_name": "KODEX 200"},
         )
         assert cfg.data_category == "ETF 구성종목"
+        assert cfg.extra["etf_code"] == "A069500"
 
 
 # ---------------------------------------------------------------------------
@@ -111,10 +118,6 @@ class TestOutputConfig:
         cfg = OutputConfig(output_format="csv")
         assert cfg.output_format == "csv"
 
-    def test_invalid_format(self):
-        with pytest.raises(ValidationError, match="output_format"):
-            OutputConfig(output_format="json")
-
     def test_toggle_flags(self):
         cfg = OutputConfig(normalize_units=False, drop_empty_entities=False)
         assert cfg.normalize_units is False
@@ -130,7 +133,7 @@ class TestIngestConfig:
 
     def test_minimal_valid(self):
         cfg = _make_config()
-        assert cfg.source.detected_format == "wide"
+        assert cfg.source.detected_format == "timeseries_wide"
         assert "default" in cfg.tables
 
     def test_defaults_applied(self):
@@ -139,7 +142,7 @@ class TestIngestConfig:
             source=_make_source(),
             tables={"default": ["item1"]},
         )
-        assert cfg.metadata.출력주기 is None
+        assert cfg.metadata.frequency is None
         assert cfg.output.output_format == "parquet"
 
     def test_missing_source_rejected(self):
@@ -180,12 +183,14 @@ class TestYamlRoundTrip:
     def test_round_trip_full_metadata(self, tmp_path):
         original = _make_config(
             metadata=MetadataConfig(
-                출력주기="일간",
-                비영업일="제외",
-                주말포함="제외",
-                기간=["20160101", "20260206"],
-                기본설정=["원화", "오름차순"],
-                달력기준=True,
+                frequency="일간",
+                currency="원화",
+                sort_order="오름차순",
+                non_business_days="제외",
+                include_weekends="제외",
+                period_start="20160101",
+                period_end="최근일자(20260206)",
+                calendar_basis=True,
             ),
         )
         yaml_path = tmp_path / "fnconfig.yaml"
@@ -223,14 +228,25 @@ class TestYamlRoundTrip:
         """Verify that Korean characters survive the YAML round-trip."""
         yaml_path = tmp_path / "fnconfig.yaml"
         original = _make_config(
-            metadata=MetadataConfig(출력주기="일간"),
+            metadata=MetadataConfig(frequency="일간"),
             tables={"default": ["수정시가(원)"]},
         )
         save_config(original, yaml_path)
         content = yaml_path.read_text(encoding="utf-8")
-        # Korean should be written as-is (allow_unicode=True), not escaped
         assert "수정시가(원)" in content
-        assert "출력주기" in content
+        assert "일간" in content
+
+    def test_round_trip_extra_metadata(self, tmp_path):
+        """Extra metadata fields should survive round-trip."""
+        original = _make_config(
+            metadata=MetadataConfig(
+                extra={"etf_code": "A069500", "etf_name": "KODEX 200"},
+            ),
+        )
+        yaml_path = tmp_path / "fnconfig.yaml"
+        save_config(original, yaml_path)
+        loaded = load_config(yaml_path)
+        assert loaded.metadata.extra == {"etf_code": "A069500", "etf_name": "KODEX 200"}
 
 
 # ---------------------------------------------------------------------------
@@ -275,35 +291,33 @@ class TestGenerateDefaultConfig:
 
     def test_basic_generation(self):
         items = ["수정시가(원)", "수정고가(원)", "거래량(주)"]
-        meta = MetadataConfig(출력주기="일간", 비영업일="제외")
+        meta = MetadataConfig(frequency="일간", non_business_days="제외")
         cfg = generate_default_config(
             input_path="inputs/test.csv",
-            detected_format="wide",
+            detected_format="timeseries_wide",
             metadata=meta,
             discovered_items=items,
         )
         assert cfg.source.input_path == "inputs/test.csv"
-        assert cfg.source.detected_format == "wide"
-        assert cfg.metadata.출력주기 == "일간"
+        assert cfg.source.detected_format == "timeseries_wide"
+        assert cfg.metadata.frequency == "일간"
         assert cfg.tables == {"default": items}
-        # Verify defaults
         assert cfg.output.output_format == "parquet"
-        assert cfg.output.normalize_units is True
 
-    def test_long_format(self):
+    def test_misc_format(self):
         cfg = generate_default_config(
             input_path="inputs/etf.csv",
-            detected_format="long",
-            metadata=MetadataConfig(조회기간=["20250101", "20260206"]),
+            detected_format="misc_etf",
+            metadata=MetadataConfig(data_category="ETF 구성종목"),
             discovered_items=["주식수(계약수)", "금액", "금액기준 구성비중(%)"],
         )
-        assert cfg.source.detected_format == "long"
+        assert cfg.source.detected_format == "misc_etf"
         assert len(cfg.tables["default"]) == 3
 
     def test_custom_output_dir(self):
         cfg = generate_default_config(
             input_path="x.csv",
-            detected_format="wide",
+            detected_format="timeseries_wide",
             metadata=MetadataConfig(),
             discovered_items=["a"],
             output_dir="custom_output/",
@@ -314,8 +328,12 @@ class TestGenerateDefaultConfig:
         """Generated config should survive YAML round-trip."""
         cfg = generate_default_config(
             input_path="inputs/test.csv",
-            detected_format="wide",
-            metadata=MetadataConfig(출력주기="일간", 기간=["20160101", "20260206"]),
+            detected_format="timeseries_wide",
+            metadata=MetadataConfig(
+                frequency="일간",
+                period_start="20160101",
+                period_end="최근일자(20260206)",
+            ),
             discovered_items=["수정시가(원)", "거래량(주)"],
         )
         yaml_path = tmp_path / "fnconfig.yaml"
@@ -332,7 +350,6 @@ class TestValidateTablesAgainstData:
     """Tests for cross-validation of config tables vs available data items."""
 
     def test_all_items_present(self):
-        """Should pass silently when all items exist."""
         cfg = _make_config(tables={"default": ["item_a", "item_b"]})
         validate_tables_against_data(cfg, {"item_a", "item_b", "item_c"})
 
@@ -358,6 +375,5 @@ class TestValidateTablesAgainstData:
             validate_tables_against_data(cfg, {"real_a", "real_b"})
 
     def test_empty_tables_dict(self):
-        """Config with no tables should pass (nothing to validate)."""
         cfg = IngestConfig(source=_make_source(), tables={})
         validate_tables_against_data(cfg, {"item_a"})

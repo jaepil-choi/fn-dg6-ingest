@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-# Directory containing layout YAML files (sibling to this module)
+# Directory containing layout YAML files (sibling package)
 _LAYOUTS_DIR = Path(__file__).parent / "layouts"
 
 # Detection priority: timeseries -> snapshot -> misc

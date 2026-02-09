@@ -28,7 +28,7 @@ import pandas as pd
 
 from fn_dg6_ingest.config import MetadataConfig
 from fn_dg6_ingest.exceptions import ParsingError
-from fn_dg6_ingest.layouts import Layout, extract_settings
+from fn_dg6_ingest.layout_registry import Layout, extract_settings
 from fn_dg6_ingest.parsers.base import BaseParser, ItemInfo, ParseResult
 
 logger = logging.getLogger(__name__)

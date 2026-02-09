@@ -1,7 +1,8 @@
 """
-Integration tests: wide-format OHLCV data end-to-end.
+Integration tests: time series data end-to-end.
 
-Runs the full init() -> ingest() pipeline against real OHLCV CSV/XLSX files.
+Runs the full init() -> ingest() pipeline against real time series
+CSV/XLSX files (OHLCV, sales-consensus).
 Uses tmp_path for output to avoid polluting the workspace.
 """
 
@@ -9,8 +10,8 @@ import pytest
 
 
 @pytest.mark.integration
-class TestWideOhlcvPipeline:
-    """End-to-end tests for wide OHLCV data."""
+class TestTimeSeriesPipeline:
+    """End-to-end tests for time series wide data."""
 
     # TODO: Test init() generates fnconfig.yaml with correct items
     # TODO: Test ingest() produces expected output tables

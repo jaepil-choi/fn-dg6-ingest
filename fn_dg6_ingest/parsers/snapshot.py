@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fn_dg6_ingest.layouts import Layout
+from fn_dg6_ingest.layout_registry import Layout
 from fn_dg6_ingest.parsers.base import BaseParser, ParseResult
 
 

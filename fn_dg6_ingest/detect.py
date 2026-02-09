@@ -28,7 +28,7 @@ import re
 from pathlib import Path
 
 from fn_dg6_ingest.exceptions import UnknownFormatError
-from fn_dg6_ingest.layouts import Layout, load_all_layouts
+from fn_dg6_ingest.layout_registry import Layout, load_all_layouts
 from fn_dg6_ingest.parsers.base import BaseParser
 
 logger = logging.getLogger(__name__)
