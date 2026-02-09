@@ -6,8 +6,15 @@ into a standardized intermediate representation (DataFrame + metadata).
 
 Design: Strategy Pattern
 - base.py defines the BaseParser ABC (protocol).
-- wide.py implements WideFormatParser for pivot-style data (dates as columns).
-- long.py implements LongFormatParser for normal-form data (dates as rows).
+- timeseries.py implements TimeSeriesWideParser for pivot-style time series data.
+- snapshot.py implements SnapshotParser (placeholder) for snapshot-style data.
+- misc.py implements MiscParser for custom/miscellaneous formats (e.g., ETF constituents).
 
-The FormatDetector (detect.py) selects the appropriate parser at runtime.
+Parser taxonomy mirrors DataGuide 6's top-level categories:
+  timeseries -> snapshot -> misc
+
+Each parser receives a Layout object from the detector, which provides
+cell coordinates for metadata extraction (no heuristic scanning).
+
+The FormatDetector (detect.py) selects the appropriate parser + layout at runtime.
 """
