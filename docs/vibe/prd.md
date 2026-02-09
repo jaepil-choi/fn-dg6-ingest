@@ -15,9 +15,15 @@
 
 ### FR-2: Auto-detect Input Shape
 
-DataGuide 6 exports come in at least two distinct layouts. The library must detect the format automatically -- the user should not need to specify it.
+DataGuide 6 exports come in three top-level categories, mirroring the DataGuide 6 interface:
 
-- **Wide format** (pivot): Dates are spread across columns. Rows are `(코드, 아이템)` pairs. The file begins with a metadata header block (`출력주기`, `비영업일`, `주말포함`, `기간`, etc.) followed by a data grid with columns `코드, 코드명, 유형, 아이템코드, 아이템명, 집계주기, <date_1>, <date_2>, ...`.
+1. **Time Series** -- the most common category. OHLCV, sales-consensus, and similar datasets. Currently only the **wide** orientation is supported (dates as columns, rows are `(코드, 아이템)` pairs). A **long** (vertical) orientation may be added later.
+2. **Snapshot** -- point-in-time data. Not yet implemented; placeholder parser exists.
+3. **Custom/Misc** -- ETF constituents and other unpredictable formats. Already in relational (long) form with varying header structures.
+
+Detection is **coordinate-based**: each known format has a **layout YAML file** (`fn_dg6_ingest/layouts/*.yaml`) that specifies exact cell coordinates for detection rules and metadata extraction. The detector reads the first N rows and tests each layout's rules in priority order (timeseries -> snapshot -> misc). No heuristic scanning.
+
+- **Time Series Wide** format: Dates are spread across columns. Rows are `(코드, 아이템)` pairs. The file begins with a metadata header block at fixed cell coordinates followed by a data grid with columns `코드, 코드명, 유형, 아이템코드, 아이템명, 집계주기, <date_1>, <date_2>, ...`.
 
   Example (OHLCV, sales-consensus):
 
@@ -34,7 +40,7 @@ DataGuide 6 exports come in at least two distinct layouts. The library must dete
   A005930  삼성전자  SSC  S410000650  수정시가(원)  일간  25,200  25,200  ...
   ```
 
-- **Long/Normal format**: Already in relational form with a proper column header row. The file has a small metadata header block followed by a single header row (e.g., `날짜, ETF코드, ETF명, 구성종목코드, 구성종목, ...`) and data rows.
+- **Misc/Custom** format: Already in relational form with a small metadata header. The header structure varies by data type (e.g., ETF constituents have different metadata fields than other custom exports).
 
   Example (ETF constituents):
 
@@ -48,19 +54,28 @@ DataGuide 6 exports come in at least two distinct layouts. The library must dete
   2025-01-02,A069500,KODEX 200,,원화현금,,9945243,0.62
   ```
 
-### FR-3: Metadata Extraction
+### FR-3: Metadata Extraction (Coordinate-Based)
 
-- Parse the header block (above the data grid) to extract dataset settings:
-  - `Refresh` / `Last Updated` timestamp
-  - `달력기준` or data category (e.g., `ETF 구성종목`)
-  - `코드 포트폴리오`, `아이템 포트폴리오`
-  - `출력주기` (output frequency)
-  - `비영업일` (non-business day handling)
-  - `주말포함` (weekend inclusion)
-  - `기간` (date range)
-  - `기본설정` (defaults: 원화, 오름차순)
-- Also extract **item-level** attributes from data rows (wide format): `아이템코드`, `유형`, `집계주기`.
-- This metadata feeds into both `fnconfig.yaml` (source-level settings) and the `_meta` output table (full lineage, see FR-9).
+Metadata is extracted using **cell coordinates** defined in layout YAML files, not heuristic scanning. Each layout specifies `settings:` entries mapping semantic English keys to `(row, col)` coordinates with an optional parse mode.
+
+Semantic metadata keys (stored in `MetadataConfig`):
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `last_updated` | `2026-02-07 15:46:56` | From `Refresh` header row |
+| `data_category` | `ETF 구성종목` | Data category label (misc formats) |
+| `calendar_basis` | `true` | Presence of `달력기준` row |
+| `code_portfolio` | `all` | Code portfolio setting |
+| `frequency` | `일간` | Output frequency (was `출력주기`) |
+| `currency` | `원화` | Currency setting (was embedded in `기본설정`) |
+| `sort_order` | `오름차순` | Sort order (was embedded in `기본설정`) |
+| `non_business_days` | `제외` | Non-business day handling (was `비영업일`) |
+| `include_weekends` | `제외` | Weekend inclusion (was `주말포함`) |
+| `period_start` | `20160101` | Data period start (was `기간[0]`) |
+| `period_end` | `최근일자(20260206)` | Data period end (was `기간[1]`) |
+| `extra` | `{etf_code: A069500}` | Catch-all for layout-specific fields |
+
+Item-level attributes are also extracted from data rows (time series): `아이템코드`, `유형`, `집계주기`.
 
 ### FR-4: Table Construction and Splitting
 
@@ -107,8 +122,8 @@ The library follows a **config-first** workflow:
 - **First run (no config exists)**:
   1. Detect format, parse input file, extract all metadata, and discover all `아이템명` present in the data.
   2. Auto-generate a `fnconfig.yaml` in the project/output directory, pre-populated with:
-     - Source file path(s) and detected format
-     - Extracted metadata (`출력주기`, `비영업일`, `주말포함`, `기간`, etc.)
+     - Source file path and detected format name (e.g., `timeseries_wide`, `misc_etf`)
+     - Extracted metadata with semantic English keys
      - A `tables` section listing a single default table containing all discovered `아이템명`
      - Default settings: `output_format: parquet`, `normalize_units: true`, `drop_empty_entities: true`
   3. Optionally proceed to build the DB immediately, or stop after config generation (user choice via flag).
@@ -130,15 +145,17 @@ Example `fnconfig.yaml` (auto-generated on first run):
 
 source:
   input_path: "inputs/dataguide_kse+kosdaq_ohlcv_from(20160101)_to(20260207).csv"
-  detected_format: wide  # auto-detected; do not change unless you know what you're doing
+  detected_format: timeseries_wide  # matches a layout YAML format_name
 
 metadata:
-  출력주기: 일간
-  비영업일: 제외
-  주말포함: 제외
-  기간: ["20160101", "20260206"]
-  기본설정: ["원화", "오름차순"]
-  달력기준: true
+  frequency: 일간
+  currency: 원화
+  sort_order: 오름차순
+  non_business_days: 제외
+  include_weekends: 제외
+  period_start: "20160101"
+  period_end: "최근일자(20260206)"
+  calendar_basis: true
 
 output:
   output_dir: "outputs/"
@@ -183,28 +200,26 @@ One row per `(source_file, 아이템명)` combination. Schema:
 | `source_file` | `dataguide_kse+kosdaq_ohlcv_...csv` | Source filename |
 | `source_hash` | `a3f2b1...` | SHA-256 of source file |
 | `source_last_updated` | `2026-02-07 15:46:56` | From `Refresh` header |
-| `detected_format` | `wide` | Auto-detected format |
+| `detected_format` | `timeseries_wide` | Layout format_name used |
 | `아이템코드` | `S410000650` | Item code from DG6 |
 | `아이템명` | `수정시가(원)` | Original item name |
 | `아이템명_normalized` | `수정시가(원)` | After unit rename (if changed) |
 | `유형` | `SSC` | Entity type (SSC, CON, etc.) |
-| `집계주기` | `일간` | Aggregation period (일간, 2026(결산), etc.) |
-| `출력주기` | `일간` | Output frequency |
-| `기간_start` | `20160101` | Source date range start |
-| `기간_end` | `20260206` | Source date range end |
+| `집계주기` | `일간` | Aggregation period |
+| `frequency` | `일간` | Output frequency |
+| `period_start` | `20160101` | Source date range start |
+| `period_end` | `20260206` | Source date range end |
 | `unit_original` | `억원` | Original unit suffix |
-| `unit_multiplier` | `100000000` | Multiplier applied (1 if no normalization) |
-| `비영업일` | `제외` | Non-business day setting |
-| `주말포함` | `제외` | Weekend inclusion setting |
-| `entities_total` | `2400` | Total entities in source for this item |
+| `unit_multiplier` | `100000000` | Multiplier applied |
+| `non_business_days` | `제외` | Non-business day setting |
+| `include_weekends` | `제외` | Weekend inclusion setting |
+| `entities_total` | `2400` | Total entities in source |
 | `entities_dropped` | `12` | Entities dropped (all-null) |
 | `processed_at` | `2026-02-09T10:30:00` | Pipeline execution timestamp |
 
-Key distinction: the meta table captures **item-level attributes** (`집계주기`, `유형`, `아이템코드`) that are discovered from data (not user-configured), plus **processing statistics** (`entities_dropped`, `source_hash`).
-
 ### FR-10: Validation
 
-- Validate that the input file matches a known DataGuide 6 pattern (presence of `Refresh` header, known metadata keys).
+- Validate that the input file matches a known DataGuide 6 layout (coordinate-based detection).
 - On subsequent runs, validate `fnconfig.yaml` schema and content before processing:
   - All required fields present and correctly typed.
   - All `아이템명` in `tables` groups exist in the source data.
@@ -235,11 +250,14 @@ flowchart TD
     ConfigCheck -->|No| FirstRun["First Run"]
     ConfigCheck -->|Yes| LoadConfig["Load + Validate Config"]
 
-    FirstRun --> Detect["FormatDetector"]
-    Detect -->|wide| WideParser["WideFormatParser"]
-    Detect -->|long| LongParser["LongFormatParser"]
-    WideParser --> RawFrame["Raw DataFrame + Metadata"]
-    LongParser --> RawFrame
+    FirstRun --> Detect["FormatDetector (layout-based)"]
+    Detect --> Router{"Format category?"}
+    Router -->|timeseries| TSParser["TimeSeriesWideParser"]
+    Router -->|snapshot| SnapParser["SnapshotParser"]
+    Router -->|misc| MiscParser["MiscParser"]
+    TSParser --> RawFrame["Raw DataFrame + Metadata"]
+    SnapParser --> RawFrame
+    MiscParser --> RawFrame
     RawFrame --> GenConfig["Generate fnconfig.yaml"]
     GenConfig --> Pipeline["TransformPipeline"]
 
@@ -254,23 +272,60 @@ flowchart TD
 
 ### 3.2 Key Design Patterns
 
-- **Strategy Pattern** for `FormatDetector` / `Parser`: Each input shape has its own parser class implementing a common `Parser` protocol. The `FormatDetector` inspects the first N rows and selects the correct strategy. This is the core extensibility point -- new DataGuide formats can be added as new parser strategies.
-- **Pipeline Pattern** for transforms: A sequence of composable transform steps (`NumberParser`, `UnitNormalizer`, `EmptyEntityDropper`, `TableSplitter`) applied to the raw DataFrame. Each step is a callable that takes a DataFrame and config, returns a DataFrame. Easy to reorder, add, or skip steps.
-- **Config as Data** via Pydantic + YAML: All user-facing configuration lives in `fnconfig.yaml`, which maps 1:1 to a Pydantic `IngestConfig` model. On first run the config is auto-generated from discovered data; on subsequent runs it is loaded, validated, and used as the single source of truth. This is the **Config-First** pattern.
+- **Strategy Pattern** for `FormatDetector` / `Parser`: Each format category has its own parser class implementing a common `BaseParser` protocol. The `FormatDetector` uses layout-based coordinate detection to select the correct strategy. New formats are added by creating a layout YAML + parser class.
+- **Pipeline Pattern** for transforms: A sequence of composable transform steps (`NumberParser`, `UnitNormalizer`, `EmptyEntityDropper`, `TableSplitter`) applied to the raw DataFrame. Each step is a callable that takes a DataFrame and config, returns a DataFrame.
+- **Config as Data** via Pydantic + YAML: All user-facing configuration lives in `fnconfig.yaml`, which maps 1:1 to a Pydantic `IngestConfig` model.
+- **Layout as Data**: Format structure knowledge (cell coordinates for metadata, detection rules) lives in YAML files, not hardcoded in Python. This separates FnGuide's layout specifics from parsing logic.
 
-### 3.3 Package Layout
+### 3.3 Layout System
+
+Each known DataGuide 6 format has a layout YAML file in `fn_dg6_ingest/layouts/`:
+
+```yaml
+# fn_dg6_ingest/layouts/timeseries_wide.yaml
+format_name: timeseries_wide
+format_category: timeseries    # timeseries | snapshot | misc
+format_orientation: wide       # wide | long
+description: "Time series wide format -- dates as columns"
+
+detection:
+  check_cell:
+    - { row: 0, col: 0, value: "Refresh" }
+  check_data_header_cols: ["코드", "코드명", "유형", "아이템코드", "아이템명", "집계주기"]
+  data_header_row: 8
+
+settings:
+  last_updated:      { row: 0, col: 1, parse: "strip_prefix:Last Updated:" }
+  calendar_basis:    { row: 1, col: 0, parse: "presence" }
+  frequency:         { row: 4, col: 1 }
+  currency:          { row: 4, col: 2 }
+  # ... etc.
+```
+
+The `layout_registry.py` module loads these at runtime, providing:
+- `Layout` Pydantic model for structured access
+- `load_all_layouts()` returns layouts sorted by detection priority
+- `extract_settings()` reads cell values using a layout's coordinate map
+
+### 3.4 Package Layout
 
 ```
 fn_dg6_ingest/
   __init__.py            # Public API: ingest(), init()
-  config.py              # Pydantic models (IngestConfig, SourceConfig, Metadata, OutputConfig)
+  config.py              # Pydantic models (IngestConfig, SourceConfig, MetadataConfig, OutputConfig)
                          # + load_config(), save_config(), generate_default_config()
-  detect.py              # FormatDetector: sniffs file, returns parser
+  detect.py              # FormatDetector: coordinate-based layout detection
+  layout_registry.py     # Layout Pydantic model + YAML loader + extract_settings()
+  layouts/
+    __init__.py           # Package marker
+    timeseries_wide.yaml  # Time series wide format layout
+    misc_etf.yaml         # Misc ETF constituent format layout
   parsers/
     __init__.py
-    base.py              # Parser protocol / ABC
-    wide.py              # WideFormatParser (pivot-style OHLCV data)
-    long.py              # LongFormatParser (normal-form ETF constituent data)
+    base.py              # BaseParser ABC, ParseResult, ItemInfo
+    timeseries.py        # TimeSeriesWideParser (pivot-style time series data)
+    snapshot.py          # SnapshotParser (placeholder)
+    misc.py              # MiscParser (ETF constituents and other custom formats)
   transforms/
     __init__.py
     pipeline.py          # TransformPipeline orchestrator
@@ -278,26 +333,26 @@ fn_dg6_ingest/
     units.py             # Detect unit suffix, scale, rename
     empty.py             # Drop entities with all-null data
     splitter.py          # Split into multiple tables by 아이템명 groups
-  meta.py                # Build the flat _meta table from parsed metadata + processing stats
-  export.py              # Exporter: write to CSV / Parquet (data tables + _meta)
+  meta.py                # Build the flat _meta table
+  export.py              # Exporter: write to CSV / Parquet
   exceptions.py          # Custom exception hierarchy
 tests/
-  conftest.py            # Shared fixtures, path constants (INPUT_DIR, all file paths)
-  unit/                  # Unit tests -- isolated, fast, no real file I/O
+  conftest.py            # Shared fixtures, path constants
+  unit/
     test_detect.py
     test_config.py
     test_numbers.py
     test_units.py
     test_empty.py
     test_splitter.py
-  integration/           # Integration tests -- end-to-end against real input files
-    test_wide_ohlcv.py
-    test_long_etf.py
+  integration/
+    test_timeseries.py
+    test_misc_etf.py
     test_config_roundtrip.py
     test_export.py
 ```
 
-### 3.4 Public API
+### 3.5 Public API
 
 ```python
 from fn_dg6_ingest import init, ingest
@@ -306,8 +361,8 @@ from fn_dg6_ingest import init, ingest
 config_path = init(
     input_path="inputs/dataguide_kse+kosdaq_ohlcv_from(20160101)_to(20260207).csv",
     output_dir="outputs/",
-    config_path="fnconfig.yaml",       # where to write the generated config
-    run_immediately=True,              # False = only generate config, don't build DB yet
+    config_path="fnconfig.yaml",
+    run_immediately=True,
 )
 
 # --- Subsequent runs: rebuild DB from config ---
@@ -326,12 +381,16 @@ save_config(cfg, "fnconfig.yaml")
 results = ingest(config_path="fnconfig.yaml")
 ```
 
-### 3.5 Format Detection Heuristic
+### 3.6 Format Detection Algorithm
 
-1. Read the first ~20 raw lines of the file.
-2. **Wide format indicators**: presence of metadata key rows (`출력주기`, `비영업일`, `주말포함`, `기간`) AND a data header row containing `코드, 코드명, 유형, 아이템코드, 아이템명` followed by date-like columns.
-3. **Long format indicators**: a single header row early in the file whose columns are all descriptive names (e.g., `날짜, ETF코드, ETF명, ...`) with no date-like columns in the header.
-4. Fallback: raise `UnknownFormatError` with a snippet of the first few lines for debugging.
+1. Load all layout YAML files from `fn_dg6_ingest/layouts/`.
+2. Read the first N rows of the input file (N = max `data_header_row` across all layouts + 2).
+3. For each layout (ordered by category priority: timeseries -> snapshot -> misc):
+   - Test all `check_cell` rules (exact cell value matches at specified coordinates).
+   - If `check_data_header_cols` is set, verify the data header row contains all required columns.
+   - For time series wide, additionally verify trailing cells in the data header look like dates.
+   - If all checks pass, return `(parser_class, layout)`.
+4. Fallback: raise `UnknownFormatError` with diagnostic snippet.
 
 ---
 
@@ -367,8 +426,8 @@ EVENT_STUDY_XLSX = INPUT_DIR / "dataguide_eventstudy_earningsurprise_from(201601
 
 - Config-first workflow: `init()` generates `fnconfig.yaml`, `ingest()` rebuilds from it
 - Pydantic config models with YAML serialization
-- Format detector (wide + long)
-- Wide parser + Long parser
+- Layout-based format detection (coordinate YAML files)
+- TimeSeriesWideParser + MiscParser (SnapshotParser placeholder)
 - Transform pipeline (number parsing, unit normalization, empty-entity drop, table splitter)
 - Flat `_meta` table builder
 - CSV and Parquet exporter
@@ -377,7 +436,9 @@ EVENT_STUDY_XLSX = INPUT_DIR / "dataguide_eventstudy_earningsurprise_from(201601
 
 ### Phase 2: Polish
 
+- Time series long parser
+- Snapshot parser (when sample data available)
 - CLI entry point (via `argparse` or `click`)
 - Richer validation and error messages
-- Additional format strategies as new DataGuide layouts are encountered
+- Additional layout YAML files for newly encountered formats
 - Documentation
