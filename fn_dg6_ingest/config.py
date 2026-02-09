@@ -6,8 +6,8 @@ plus helper functions for loading, saving, and auto-generating the config.
 
 Key models:
 - IngestConfig: Top-level config (source + metadata + output + tables).
-- SourceConfig: Input file path and detected format.
-- MetadataConfig: Extracted DataGuide 6 header metadata (출력주기, 비영업일, etc.).
+- SourceConfig: Input file path and detected format name.
+- MetadataConfig: Extracted DataGuide 6 header metadata with semantic English keys.
 - OutputConfig: Output directory, format, normalization and cleaning toggles.
 
 Key functions:
@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -40,30 +39,45 @@ class SourceConfig(BaseModel):
     """Source file information."""
 
     input_path: str = Field(..., description="Path to the DataGuide 6 export file")
-    detected_format: Literal["wide", "long"] = Field(
+    detected_format: str = Field(
         ...,
-        description="Auto-detected format; 'wide' for pivot, 'long' for normal form",
+        description=(
+            "Auto-detected layout format_name from the layout YAML files. "
+            "Examples: 'timeseries_wide', 'misc_etf'. "
+            "Matches a format_name in fn_dg6_ingest/layouts/*.yaml."
+        ),
     )
 
 
 class MetadataConfig(BaseModel):
     """Metadata extracted from the DataGuide 6 file header block.
 
-    These values are discovered from the file, not user-configured.
-    They are stored in the config for reference and reproducibility.
+    These values are discovered from the file via layout cell coordinates,
+    not user-configured. They use semantic English keys rather than Korean
+    labels, because the Korean labels (e.g., 기본설정) are UI identifiers,
+    not semantic names.
+
+    Settings extracted by the layout are stored here. Keys that don't match
+    a defined field go into the `extra` dict.
     """
 
-    출력주기: str | None = None
-    비영업일: str | None = None
-    주말포함: str | None = None
-    기간: list[str] | None = None
-    기본설정: list[str] | None = None
-    달력기준: bool | None = None
-    # Long-format specific
-    조회기간: list[str] | None = None
-    # Catch-all for additional metadata discovered from new formats
+    last_updated: str | None = None
     data_category: str | None = Field(
         None, description="Data category from header (e.g., 'ETF 구성종목')"
+    )
+    calendar_basis: bool | None = None
+    code_portfolio: str | None = None
+    frequency: str | None = Field(None, description="Output frequency (e.g., 일간)")
+    currency: str | None = Field(None, description="Currency setting (e.g., 원화)")
+    sort_order: str | None = Field(None, description="Sort order (e.g., 오름차순)")
+    non_business_days: str | None = Field(None, description="Non-business day handling (e.g., 제외)")
+    include_weekends: str | None = Field(None, description="Weekend inclusion (e.g., 제외)")
+    period_start: str | None = Field(None, description="Data period start (e.g., 20160101)")
+    period_end: str | None = Field(None, description="Data period end (e.g., 최근일자(20260206))")
+    # Catch-all for layout-specific fields not in the standard schema
+    extra: dict[str, str] = Field(
+        default_factory=dict,
+        description="Additional settings from layout that don't have dedicated fields",
     )
 
 
@@ -71,8 +85,8 @@ class OutputConfig(BaseModel):
     """Output settings."""
 
     output_dir: str = Field("outputs/", description="Directory for output files")
-    output_format: Literal["csv", "parquet"] = Field(
-        "parquet", description="Output format"
+    output_format: str = Field(
+        "parquet", description="Output format: csv | parquet"
     )
     normalize_units: bool = Field(
         True, description="If True, scale monetary columns to base unit (원)"
@@ -155,7 +169,7 @@ def save_config(config: IngestConfig, path: str | Path) -> None:
 
 def generate_default_config(
     input_path: str,
-    detected_format: Literal["wide", "long"],
+    detected_format: str,
     metadata: MetadataConfig,
     discovered_items: list[str],
     output_dir: str = "outputs/",
@@ -164,7 +178,7 @@ def generate_default_config(
 
     Args:
         input_path: Path to the source file.
-        detected_format: The auto-detected format ('wide' or 'long').
+        detected_format: The layout format_name (e.g., 'timeseries_wide').
         metadata: Metadata extracted from the file header.
         discovered_items: List of all 아이템명 found in the data.
         output_dir: Where output files should be written.

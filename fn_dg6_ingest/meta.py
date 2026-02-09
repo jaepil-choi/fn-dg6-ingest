@@ -10,7 +10,7 @@ Purpose:
   fnconfig.yaml which is PRESCRIPTIVE (records what the user wants).
 
   Key information captured:
-  - Source-level: filename, hash, last_updated, detected_format, 출력주기, etc.
+  - Source-level: filename, hash, last_updated, detected_format, frequency, etc.
   - Item-level: 아이템코드, 유형, 집계주기 (discovered from data, NOT user-configured).
   - Processing: unit normalization applied, entities dropped, timestamp.
 
@@ -57,5 +57,11 @@ def build_meta_table(
 
     Returns:
         DataFrame with one row per (source_file, 아이템명).
+        Columns use semantic English keys matching MetadataConfig fields:
+        - table_name, source_file, source_hash, source_last_updated
+        - detected_format, 아이템코드, 아이템명, 아이템명_normalized
+        - 유형, 집계주기, frequency, period_start, period_end
+        - unit_original, unit_multiplier, non_business_days, include_weekends
+        - entities_total, entities_dropped, processed_at
     """
     raise NotImplementedError("build_meta_table() not yet implemented")
