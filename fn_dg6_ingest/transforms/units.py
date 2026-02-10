@@ -71,11 +71,47 @@ def normalize_column_name(column_name: str, original_unit: str) -> str:
 def normalize_units(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, tuple[str, int]]]:
     """Scale monetary columns to base unit (원) and rename suffixes.
 
+    For each column whose name contains a monetary unit suffix (e.g.,
+    ``매출액(억원)``), this function:
+
+    1. Multiplies all numeric values in that column by the unit multiplier.
+    2. Renames the column suffix to ``(원)`` (e.g., ``매출액(억원)`` -> ``매출액(원)``).
+
+    Columns already in base unit ``(원)`` are recorded in ``unit_info`` with
+    multiplier 1 but are *not* modified. Non-monetary suffixes like ``(주)``
+    and ``(%)`` are ignored entirely.
+
     Args:
         df: DataFrame with columns that may have unit suffixes.
+            Numeric columns should already be coerced (run ``parse_numbers`` first).
 
     Returns:
         Tuple of (transformed DataFrame, unit_info dict).
-        unit_info maps original_column_name -> (original_unit, multiplier).
+        unit_info maps original_column_name -> (original_unit, multiplier)
+        for every column where a monetary unit was detected.
     """
-    raise NotImplementedError("normalize_units() not yet implemented")
+    df = df.copy()
+    unit_info: dict[str, tuple[str, int]] = {}
+    rename_map: dict[str, str] = {}
+
+    for col in df.columns:
+        unit, multiplier = detect_unit(col)
+        if unit is None:
+            # No monetary unit detected -- skip
+            continue
+
+        # Record the original unit info (used by _meta table builder)
+        unit_info[col] = (unit, multiplier)
+
+        if multiplier > 1:
+            # Scale the values: e.g., 100 (억원) -> 10,000,000,000 (원)
+            df[col] = df[col] * multiplier
+            # Schedule a rename: 매출액(억원) -> 매출액(원)
+            new_name = normalize_column_name(col, unit)
+            rename_map[col] = new_name
+
+    # Apply all renames at once to avoid intermediate collisions
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    return df, unit_info
