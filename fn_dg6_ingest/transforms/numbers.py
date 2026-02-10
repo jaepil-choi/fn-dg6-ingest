@@ -22,6 +22,14 @@ import pandas as pd
 def parse_numbers(df: pd.DataFrame, key_columns: list[str]) -> pd.DataFrame:
     """Parse numeric strings in a DataFrame.
 
+    Applies three cleaning steps to every non-key column:
+    1. Strip leading/trailing whitespace.
+    2. Remove comma thousand separators (Korean convention).
+    3. Coerce to numeric via ``pd.to_numeric(errors='coerce')``.
+
+    Empty strings are treated as missing (``NaN``) after coercion.
+    Key columns are left as-is (string dtype).
+
     Args:
         df: Input DataFrame with string values from CSV.
         key_columns: Column names to skip (these are string identifiers, not numbers).
@@ -29,4 +37,15 @@ def parse_numbers(df: pd.DataFrame, key_columns: list[str]) -> pd.DataFrame:
     Returns:
         DataFrame with numeric columns coerced to appropriate dtypes.
     """
-    raise NotImplementedError("parse_numbers() not yet implemented")
+    df = df.copy()
+    key_set = set(key_columns)
+    value_cols = [c for c in df.columns if c not in key_set]
+
+    for col in value_cols:
+        series = df[col]
+        # Step 1 & 2: strip whitespace and remove commas
+        cleaned = series.str.strip().str.replace(",", "", regex=False)
+        # Step 3: coerce to numeric (empty strings and non-numeric become NaN)
+        df[col] = pd.to_numeric(cleaned, errors="coerce")
+
+    return df
