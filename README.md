@@ -2,6 +2,17 @@
 
 FnGuide DataGuide 6에서 내보낸 CSV/Excel 파일을 자동 감지하고, 정제된 관계형 테이블(CSV/Parquet)로 변환하며, 변환된 데이터를 프로그래밍 방식으로 읽을 수 있게 해주는 Python 라이브러리.
 
+## Why?
+
+2025년 12월, FnGuide DataGuide가 버전 5에서 6으로 업데이트되었습니다. 기존에 DataGuide에서 엑셀로 데이터를 내보낸 뒤 Python에서 활용하는 과정에는 여러 불편함이 있었습니다:
+
+- **날짜가 컬럼에 펼쳐지는 구조** -- 대량 데이터 내보내기 시 날짜가 열(column)로 나열되어 처리가 번거로움
+- **비관계형 레이아웃** -- 일반적인 관계형 DB(long format)와 다른 구조라 분석에 바로 쓰기 어려움
+- **빈 종목 데이터** -- 상장 폐지 등으로 데이터가 없는 종목도 전체 기간에 걸쳐 null 행이 존재
+- **느린 로딩 속도** -- 큰 파일을 그대로 읽으면 불필요한 데이터까지 스캔
+
+DataGuide 6 업데이트를 계기로, **내보낸 파일만 넣으면 정제된 CSV/Parquet DB로 자동 변환해 주는 라이브러리**를 만들고자 이 프로젝트를 시작했습니다.
+
 ---
 
 ## Quick Start
@@ -9,6 +20,10 @@ FnGuide DataGuide 6에서 내보낸 CSV/Excel 파일을 자동 감지하고, 정
 ### 1. 설치
 
 ```bash
+# 아직 PyPI에 배포되지 않았으므로 저장소를 클론하여 설치합니다.
+git clone https://github.com/youruser/fn-dg6-ingest.git
+cd fn-dg6-ingest
+
 # uv 사용 (권장)
 uv pip install -e .
 
@@ -59,7 +74,7 @@ df = ds.load(codes=["A005930"], items=["수정주가(원)"])       # 삼성전�
 df = ds.load(date_from="2024-01-01", date_to="2025-12-31")  # 날짜 범위
 
 # ── 메타데이터 조회 ──
-meta = ds.load_meta()    # _meta 리니지 테이블
+meta = ds.load_meta()    # _meta 메타 테이블
 info = ds.describe()     # 빠른 메타데이터 (데이터 스캔 없이)
 ```
 
@@ -197,7 +212,7 @@ df = ds.load(codes=["A005930"], date_from="2024-01-01",
 
 테이블이 1개면 `DataFrame`, 여러 개면 `dict[str, DataFrame]`을 반환합니다.
 
-### `ds.load_meta()` -- 리니지 테이블 읽기
+### `ds.load_meta()` -- 메타 테이블 읽기
 
 ```python
 meta = ds.load_meta()  # _meta DataFrame (20개 컬럼)
@@ -302,7 +317,7 @@ outputs/
 ├── etfconst(kodex200).yaml              # 설정 파일
 ├── etfconst(kodex200)/
 │   ├── default.parquet                  # 데이터 테이블
-│   └── _meta.parquet                    # 데이터 리니지
+│   └── _meta.parquet                    # 메타 테이블
 ├── kse+kosdaq_ohlcv.yaml
 ├── kse+kosdaq_ohlcv/
 │   ├── default.parquet
@@ -346,7 +361,7 @@ outputs/
 - **단위 자동 환산** -- `(천원)`, `(억원)`, `(십억원)` 등의 금액 단위를 `(원)` 기준으로 환산
 - **빈 종목 제거** -- 전 기간 데이터가 없는 종목을 자동 제외 (OHLCV: 4,071개 중 1,000개 제거)
 - **Config-First 워크플로우** -- `fnconfig.yaml` 하나로 테이블 분할, 출력 포맷, 정제 옵션을 제어
-- **데이터 리니지** -- `_meta` 테이블로 처리 이력 추적 (원본 해시, 단위 환산 내역, 종목 통계)
+- **메타 테이블** -- `_meta` 테이블로 처리 이력 추적 (원본 해시, 단위 환산 내역, 종목 통계)
 
 ---
 
