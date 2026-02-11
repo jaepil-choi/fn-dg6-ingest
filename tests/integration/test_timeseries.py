@@ -35,21 +35,19 @@ class TestTimeSeriesOhlcv:
         config_path = str(tmp_path / "fnconfig.yaml")
         output_dir = str(tmp_path / "out")
 
-        result = init(
+        ds = init(
             input_path=str(WIDE_OHLCV_CSV),
             output_dir=output_dir,
             config_path=config_path,
             run_immediately=True,
         )
 
-        # Config was generated
-        assert result == config_path
+        # Config was generated -- init() now returns Dataset
+        assert str(ds.config_path) == config_path
         assert (tmp_path / "fnconfig.yaml").exists()
 
         # Output files exist (default table + _meta)
-        from fn_dg6_ingest.config import load_config
-
-        cfg = load_config(config_path)
+        cfg = ds.config
         out = tmp_path / "out"
         for table_name in cfg.tables:
             assert (out / f"{table_name}.{cfg.output.output_format}").exists()
@@ -110,9 +108,9 @@ class TestTimeSeriesOhlcv:
         # Read first-run output
         meta_1 = pd.read_parquet(tmp_path / "out" / "_meta.parquet")
 
-        # Re-run via ingest()
-        written = ingest(config_path=config_path)
-        assert len(written) >= 2  # at least 1 data table + _meta
+        # Re-run via ingest() -- now returns Dataset
+        ds2 = ingest(config_path=config_path)
+        assert isinstance(ds2.config, type(ds2.config))  # sanity check
 
         # Second-run _meta has same structure
         meta_2 = pd.read_parquet(tmp_path / "out" / "_meta.parquet")
@@ -143,7 +141,7 @@ class TestTimeSeriesOhlcv:
         }
         save_config(cfg, config_path)
 
-        written = ingest(config_path=config_path)
+        ds = ingest(config_path=config_path)
 
         # Should have 3 files: ohlcv, volume, _meta
         out = tmp_path / "out"

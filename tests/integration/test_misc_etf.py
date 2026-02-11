@@ -65,10 +65,9 @@ class TestMiscEtfPipeline:
             run_immediately=False,
         )
 
-        written = ingest(config_path=config_path)
-        assert len(written) >= 2
+        ds = ingest(config_path=config_path)
 
-        cfg = load_config(config_path)
+        cfg = ds.config
         meta = pd.read_parquet(tmp_path / "out" / "_meta.parquet")
         assert len(meta) == sum(len(items) for items in cfg.tables.values())
 

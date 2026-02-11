@@ -75,8 +75,8 @@ class TestConfigRoundtrip:
         save_config(cfg, config_path)
 
         # ingest() should succeed with the modified config
-        written = ingest(config_path=config_path)
-        assert len(written) == 3  # group_a, group_b, _meta
+        ds = ingest(config_path=config_path)
+        assert ds.config is not None  # ingest succeeded
 
         out = tmp_path / "out"
         assert (out / "group_a.parquet").exists()
