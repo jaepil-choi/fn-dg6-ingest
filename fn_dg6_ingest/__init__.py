@@ -1,13 +1,19 @@
 """
 fn-dg6-ingest: Python library for ingesting FnGuide DataGuide 6 exports.
 
-This is the public API surface. Two primary entry points:
+Public API surface:
 
-- init(): First-run workflow. Detects format, discovers items, generates
-  fnconfig.yaml, and optionally builds the output DB immediately.
+- ``open(path, ...)`` -- **recommended entry point**. Polymorphic: accepts
+  either a DG6 source file or an existing ``fnconfig.yaml`` path and
+  returns a ``Dataset`` handle.
 
-- ingest(): Subsequent-run workflow. Loads and validates fnconfig.yaml,
-  then rebuilds the entire output DB from that config.
+- ``init(...)`` -- First-run workflow. Detects format, discovers items,
+  generates ``fnconfig.yaml``, and optionally builds the output DB.
+  Returns a ``Dataset``.
+
+- ``ingest(...)`` -- Subsequent-run workflow. Loads and validates
+  ``fnconfig.yaml``, then rebuilds the entire output DB.  Returns a
+  ``Dataset``.
 
 See docs/vibe/prd.md for full requirements and architecture.
 """
@@ -17,6 +23,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from fn_dg6_ingest._pipeline import run_pipeline_and_export
 from fn_dg6_ingest.config import (
     IngestConfig,
     generate_default_config,
@@ -24,134 +31,99 @@ from fn_dg6_ingest.config import (
     save_config,
     validate_tables_against_data,
 )
+from fn_dg6_ingest.dataset import Dataset
 from fn_dg6_ingest.detect import detect_format
-from fn_dg6_ingest.export import export_tables
-from fn_dg6_ingest.meta import build_meta_table
-from fn_dg6_ingest.parsers.base import ParseResult
-from fn_dg6_ingest.transforms.pipeline import TransformPipeline
 
-__all__ = ["init", "ingest"]
+__all__ = ["open", "init", "ingest", "Dataset"]
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
-def _build_table_assignment(config: IngestConfig) -> dict[str, str]:
-    """Invert ``config.tables`` into a map of ``아이템명 -> table_name``.
-
-    The config stores ``{table_name: [item_names]}``.  Downstream
-    ``build_meta_table`` needs the inverse: ``{item_name: table_name}``.
-    """
-    assignment: dict[str, str] = {}
-    for table_name, items in config.tables.items():
-        for item in items:
-            assignment[item] = table_name
-    return assignment
-
-
-def _build_entity_stats(
-    pipeline_result,  # PipelineResult -- avoid circular import at module level
-    config: IngestConfig,
-) -> dict[str, tuple[int, int]]:
-    """Build per-table entity statistics from the pipeline result.
-
-    The empty-entity drop currently runs *before* the table split, so
-    all tables share the same ``(total, dropped)`` counts.  We still
-    structure this per-table for future flexibility (the
-    ``build_meta_table`` signature expects it).
-    """
-    if pipeline_result.drop_result is not None:
-        total = pipeline_result.drop_result.entities_total
-        dropped = pipeline_result.drop_result.entities_dropped
-    else:
-        total = 0
-        dropped = 0
-
-    return {table_name: (total, dropped) for table_name in config.tables}
-
-
-def _run_pipeline_and_export(
-    config: IngestConfig,
-    parse_result: ParseResult,
-) -> list[str]:
-    """Shared logic for the pipeline -> meta -> export sequence.
-
-    Used by both ``init(run_immediately=True)`` and ``ingest()``.
-
-    Steps:
-      1. Run the transform pipeline (numbers -> units -> empty drop -> split).
-      2. Build ``table_assignment`` and ``entity_stats`` dicts.
-      3. Build the ``_meta`` DataFrame.
-      4. Export all tables + ``_meta`` to disk.
-
-    Args:
-        config: The validated IngestConfig.
-        parse_result: Output from the parser (df, metadata, items, key_columns).
-
-    Returns:
-        List of output file paths that were written.
-    """
-    # 1. Transform pipeline
-    pipeline = TransformPipeline(config)
-    pipeline_result = pipeline.run(
-        parse_result.df,
-        key_columns=parse_result.key_columns or None,
-    )
-
-    # 2. Build helper dicts
-    #    table_assignment must use post-unit-rename item names so that
-    #    _meta correctly maps items to tables after unit normalization.
-    from fn_dg6_ingest.transforms.units import normalize_column_name
-
-    table_assignment: dict[str, str] = {}
-    for table_name, items in config.tables.items():
-        for item in items:
-            # Check if this item was renamed by unit normalization
-            if item in pipeline_result.unit_info:
-                _unit, multiplier = pipeline_result.unit_info[item]
-                if multiplier > 1:
-                    renamed = normalize_column_name(item, _unit)
-                    table_assignment[renamed] = table_name
-                    continue
-            table_assignment[item] = table_name
-
-    entity_stats = _build_entity_stats(pipeline_result, config)
-
-    # 3. Build _meta table
-    meta_df = build_meta_table(
-        config=config,
-        items=parse_result.items,
-        source_last_updated=parse_result.source_last_updated,
-        table_assignment=table_assignment,
-        unit_info=pipeline_result.unit_info,
-        entity_stats=entity_stats,
-    )
-
-    # 4. Export
-    written = export_tables(
-        tables=pipeline_result.tables,
-        meta_df=meta_df,
-        output_dir=config.output.output_dir,
-        output_format=config.output.output_format,
-    )
-
-    logger.info("Pipeline complete: wrote %d files", len(written))
-    return written
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
+def open(
+    path: str,
+    output_dir: str | None = None,
+    config_path: str | None = None,
+    run_immediately: bool = True,
+) -> Dataset:
+    """Single entry point: open a DG6 source file or an existing config.
+
+    Polymorphic behaviour based on the file extension of *path*:
+
+    - **YAML file** (``.yaml`` / ``.yml``): Loads the existing config and
+      returns a ``Dataset`` handle.  No pipeline execution.
+
+    - **DG6 source file** (CSV / Excel): First-run workflow -- detects
+      format, parses the file, generates ``fnconfig.yaml``, optionally
+      runs the pipeline, and returns a ``Dataset``.
+
+    Args:
+        path: Path to either a DG6 source file (CSV/Excel) or an
+            existing ``fnconfig.yaml``.
+        output_dir: Where output tables will be written.  Required for
+            source files; ignored when opening a YAML config.  If
+            ``None`` for a source file, defaults to ``"outputs/"``.
+        config_path: Where to write the generated config.  If ``None``,
+            derived as ``{output_dir}.yaml`` (sibling of output_dir).
+            Ignored when opening a YAML config.
+        run_immediately: If ``True`` (default), run the full pipeline
+            immediately after config generation.  Only applies to
+            source files.
+
+    Returns:
+        A ``Dataset`` handle.
+
+    Examples::
+
+        # First run from source file
+        ds = fn_dg6_ingest.open(
+            "inputs/dataguide_ohlcv.csv",
+            output_dir="outputs/ohlcv",
+        )
+
+        # Subsequent run from config
+        ds = fn_dg6_ingest.open("outputs/ohlcv.yaml")
+
+        # Read data
+        df = ds.load(codes=["A005930"])
+    """
+    p = Path(path)
+
+    if p.suffix.lower() in (".yaml", ".yml"):
+        # -- Open existing config --
+        logger.info("open() -- loading config from %s", path)
+        config = load_config(path)
+        return Dataset(config, p)
+
+    # -- First run from source file --
+    if output_dir is None:
+        output_dir = "outputs/"
+    if config_path is None:
+        # Derive config path as sibling YAML of the output_dir
+        # e.g., output_dir="outputs/ohlcv" -> config_path="outputs/ohlcv.yaml"
+        config_path = str(Path(output_dir).with_suffix(".yaml"))
+        # If output_dir ends with "/" (bare), put yaml next to it
+        if output_dir.endswith("/") or output_dir.endswith("\\"):
+            config_path = str(Path(output_dir.rstrip("/\\")).with_suffix(".yaml"))
+
+    ds = init(
+        input_path=path,
+        output_dir=output_dir,
+        config_path=config_path,
+        run_immediately=run_immediately,
+    )
+    return ds
+
+
 def init(
     input_path: str,
     output_dir: str = "outputs/",
     config_path: str = "fnconfig.yaml",
     run_immediately: bool = True,
-) -> str:
+) -> Dataset:
     """First-run entry point: detect format, generate config, optionally build DB.
 
     Orchestration:
@@ -160,7 +132,7 @@ def init(
       3. ``generate_default_config()`` -> ``IngestConfig``
       4. ``save_config()`` to *config_path*
       5. If *run_immediately* is True, run the full pipeline via
-         ``_run_pipeline_and_export()``.
+         ``run_pipeline_and_export()``.
 
     Args:
         input_path: Path to the DataGuide 6 CSV/Excel export file.
@@ -170,7 +142,7 @@ def init(
             generation.  If False, only generate the config file and stop.
 
     Returns:
-        The path to the generated fnconfig.yaml.
+        A ``Dataset`` handle with the generated config.
 
     Raises:
         UnknownFormatError: If the input file doesn't match any known layout.
@@ -209,12 +181,12 @@ def init(
     # Step 5: Optionally run the full pipeline
     if run_immediately:
         logger.info("run_immediately=True -- running pipeline")
-        _run_pipeline_and_export(config, parse_result)
+        run_pipeline_and_export(config, parse_result)
 
-    return config_path
+    return Dataset(config, config_path)
 
 
-def ingest(config_path: str = "fnconfig.yaml") -> list[str]:
+def ingest(config_path: str = "fnconfig.yaml") -> Dataset:
     """Subsequent-run entry point: load config, validate, rebuild output DB.
 
     Orchestration:
@@ -223,13 +195,13 @@ def ingest(config_path: str = "fnconfig.yaml") -> list[str]:
       3. ``parser.parse()`` -> ``ParseResult``.
       4. ``validate_tables_against_data()`` -- cross-check config items vs
          source data.
-      5. ``_run_pipeline_and_export()`` -- transform, build meta, export.
+      5. ``run_pipeline_and_export()`` -- transform, build meta, export.
 
     Args:
         config_path: Path to fnconfig.yaml (must already exist).
 
     Returns:
-        List of output file paths that were written.
+        A ``Dataset`` handle with the loaded config.
 
     Raises:
         FileNotFoundError: If *config_path* does not exist.
@@ -260,6 +232,6 @@ def ingest(config_path: str = "fnconfig.yaml") -> list[str]:
     validate_tables_against_data(config, available_items)
 
     # Step 5: Run pipeline -> meta -> export
-    written = _run_pipeline_and_export(config, parse_result)
+    run_pipeline_and_export(config, parse_result)
 
-    return written
+    return Dataset(config, config_path)
