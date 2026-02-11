@@ -140,4 +140,5 @@ class TimeSeriesWideParser(BaseParser):
             items=items,
             source_last_updated=source_last_updated,
             format_name=layout.format_name,
+            key_columns=["코드", "코드명", "date"],
         )

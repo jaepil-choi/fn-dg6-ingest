@@ -49,12 +49,18 @@ class ParseResult:
         items: List of item-level metadata (one per unique item).
         source_last_updated: The 'Last Updated' timestamp from the Refresh header.
         format_name: The layout format_name that was used to parse this file.
+        key_columns: Column names that are entity identifiers or dates
+            (NOT value/item columns). Populated by each parser so the
+            pipeline knows which columns to exclude from numeric transforms
+            and table splitting. E.g., ``["코드", "코드명", "date"]`` for
+            time series, or ``["날짜", "ETF코드", "ETF명", ...]`` for misc.
     """
     df: pd.DataFrame
     metadata: MetadataConfig
     items: list[ItemInfo] = field(default_factory=list)
     source_last_updated: str | None = None
     format_name: str = ""
+    key_columns: list[str] = field(default_factory=list)
 
 
 class BaseParser(ABC):

@@ -108,12 +108,15 @@ class MiscParser(BaseParser):
 
         # Step 3: Identify value columns via data-driven numeric check
         value_columns = _detect_value_columns(df)
+        value_set = set(value_columns)
+        key_columns = [c for c in df.columns if c not in value_set]
         items = [ItemInfo(아이템명=col) for col in value_columns]
 
         logger.info(
-            "Detected %d value columns, %d key columns",
+            "Detected %d value columns, %d key columns: %s",
             len(value_columns),
-            len(df.columns) - len(value_columns),
+            len(key_columns),
+            key_columns,
         )
 
         return ParseResult(
@@ -122,4 +125,5 @@ class MiscParser(BaseParser):
             items=items,
             source_last_updated=source_last_updated,
             format_name=layout.format_name,
+            key_columns=key_columns,
         )
