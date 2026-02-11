@@ -318,3 +318,70 @@ class TestDatasetSaveConfig:
         reloaded = load_config(dataset_parquet.config_path)
         assert set(reloaded.tables.keys()) == {"ohlcv", "volume"}
         assert reloaded.tables["ohlcv"] == ["수정주가(원)"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: _outputs_exist helper
+# ---------------------------------------------------------------------------
+
+class TestOutputsExist:
+    """Tests for the _outputs_exist() helper used by open()."""
+
+    def test_all_files_present(self, tmp_path, sample_df, sample_meta_df):
+        """Returns True when all table files + _meta exist."""
+        from fn_dg6_ingest import _outputs_exist
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        sample_df.to_parquet(out_dir / "default.parquet", index=False)
+        sample_meta_df.to_parquet(out_dir / "_meta.parquet", index=False)
+
+        config = _make_config(output_dir=str(out_dir))
+        assert _outputs_exist(config) is True
+
+    def test_missing_table_file(self, tmp_path, sample_meta_df):
+        """Returns False when a table file is missing."""
+        from fn_dg6_ingest import _outputs_exist
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        # Only write _meta, no table file
+        sample_meta_df.to_parquet(out_dir / "_meta.parquet", index=False)
+
+        config = _make_config(output_dir=str(out_dir))
+        assert _outputs_exist(config) is False
+
+    def test_missing_meta_file(self, tmp_path, sample_df):
+        """Returns False when _meta is missing."""
+        from fn_dg6_ingest import _outputs_exist
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        # Only write table, no _meta
+        sample_df.to_parquet(out_dir / "default.parquet", index=False)
+
+        config = _make_config(output_dir=str(out_dir))
+        assert _outputs_exist(config) is False
+
+    def test_no_output_dir(self, tmp_path):
+        """Returns False when output dir doesn't exist."""
+        from fn_dg6_ingest import _outputs_exist
+
+        config = _make_config(output_dir=str(tmp_path / "nonexistent"))
+        assert _outputs_exist(config) is False
+
+    def test_multi_table_partial(self, tmp_path, sample_df, sample_meta_df):
+        """Returns False when only some of multiple tables exist."""
+        from fn_dg6_ingest import _outputs_exist
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        sample_df.to_parquet(out_dir / "ohlcv.parquet", index=False)
+        # volume.parquet is missing
+        sample_meta_df.to_parquet(out_dir / "_meta.parquet", index=False)
+
+        config = _make_config(
+            output_dir=str(out_dir),
+            tables={"ohlcv": ["수정주가(원)"], "volume": ["거래량(주)"]},
+        )
+        assert _outputs_exist(config) is False

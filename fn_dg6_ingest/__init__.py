@@ -40,6 +40,35 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+def _outputs_exist(config: IngestConfig) -> bool:
+    """Check whether the output files for a config already exist on disk.
+
+    Returns ``True`` when **all** expected table files plus the
+    ``_meta`` file are present.  This is used by ``open()`` to skip
+    the expensive pipeline when data has already been built.
+    """
+    out = Path(config.output.output_dir)
+    fmt = config.output.output_format
+
+    if not out.is_dir():
+        return False
+
+    # Check every table declared in config
+    for table_name in config.tables:
+        if not (out / f"{table_name}.{fmt}").exists():
+            return False
+
+    # Check _meta
+    if not (out / f"_meta.{fmt}").exists():
+        return False
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -48,6 +77,7 @@ def open(
     output_dir: str | None = None,
     config_path: str | None = None,
     run_immediately: bool = True,
+    force: bool = False,
 ) -> Dataset:
     """Single entry point: open a DG6 source file or an existing config.
 
@@ -56,9 +86,12 @@ def open(
     - **YAML file** (``.yaml`` / ``.yml``): Loads the existing config and
       returns a ``Dataset`` handle.  No pipeline execution.
 
-    - **DG6 source file** (CSV / Excel): First-run workflow -- detects
-      format, parses the file, generates ``fnconfig.yaml``, optionally
-      runs the pipeline, and returns a ``Dataset``.
+    - **DG6 source file** (CSV / Excel): **Idempotent** first-run
+      workflow.  If the config and output data already exist, skips the
+      expensive transformation and returns a ``Dataset`` handle pointing
+      at the existing outputs.  If outputs are missing, detects the
+      format, generates the config, and (when *run_immediately* is True)
+      runs the pipeline.  Pass ``force=True`` to always rebuild.
 
     Args:
         path: Path to either a DG6 source file (CSV/Excel) or an
@@ -71,20 +104,35 @@ def open(
             Ignored when opening a YAML config.
         run_immediately: If ``True`` (default), run the full pipeline
             immediately after config generation.  Only applies to
-            source files.
+            source files (and only when outputs don't already exist).
+        force: If ``True``, always re-run the pipeline even when
+            outputs already exist.
 
     Returns:
         A ``Dataset`` handle.
 
     Examples::
 
-        # First run from source file
+        # First run -- builds everything
         ds = fn_dg6_ingest.open(
             "inputs/dataguide_ohlcv.csv",
             output_dir="outputs/ohlcv",
         )
 
-        # Subsequent run from config
+        # Second call -- detects existing outputs, skips build
+        ds = fn_dg6_ingest.open(
+            "inputs/dataguide_ohlcv.csv",
+            output_dir="outputs/ohlcv",
+        )
+
+        # Force rebuild
+        ds = fn_dg6_ingest.open(
+            "inputs/dataguide_ohlcv.csv",
+            output_dir="outputs/ohlcv",
+            force=True,
+        )
+
+        # Open from config directly
         ds = fn_dg6_ingest.open("outputs/ohlcv.yaml")
 
         # Read data
@@ -98,7 +146,7 @@ def open(
         config = load_config(path)
         return Dataset(config, p)
 
-    # -- First run from source file --
+    # -- Source file path --
     if output_dir is None:
         output_dir = "outputs/"
     if config_path is None:
@@ -108,6 +156,21 @@ def open(
         # If output_dir ends with "/" (bare), put yaml next to it
         if output_dir.endswith("/") or output_dir.endswith("\\"):
             config_path = str(Path(output_dir.rstrip("/\\")).with_suffix(".yaml"))
+
+    # -- Skip if config + outputs already exist (idempotent open) --
+    if not force and Path(config_path).exists():
+        config = load_config(config_path)
+        if _outputs_exist(config):
+            logger.info(
+                "open() -- outputs already exist, skipping build "
+                "(config=%s, output_dir=%s)",
+                config_path, config.output.output_dir,
+            )
+            return Dataset(config, config_path)
+        # Config exists but outputs are missing -- rebuild
+        logger.info(
+            "open() -- config exists but outputs missing, running pipeline"
+        )
 
     ds = init(
         input_path=path,

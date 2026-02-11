@@ -2,11 +2,13 @@
 Demo script: process all three test DataGuide 6 files via the public API.
 
 Usage:
-    uv run python scripts/run_ingest.py
+    uv run python scripts/run_ingest.py              # idempotent (skips if data exists)
+    uv run python scripts/run_ingest.py --force       # force rebuild all
 
 Each input file gets its own output subdirectory and fnconfig.yaml under outputs/.
-After the first run, you can edit the generated YAML configs and re-run to
-rebuild with custom table groupings.
+On first run, open() detects the format, generates the config, and builds output.
+On subsequent runs, open() detects existing outputs and skips the build.
+Pass --force to always rebuild.
 """
 
 from __future__ import annotations
@@ -61,7 +63,9 @@ def _derive_name(input_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from fn_dg6_ingest import init, ingest
+    import fn_dg6_ingest
+
+    force = "--force" in sys.argv
 
     for input_path in INPUT_FILES:
         if not Path(input_path).exists():
@@ -69,8 +73,8 @@ def main() -> None:
             continue
 
         name = _derive_name(input_path)
-        output_dir = OUTPUT_ROOT / name
-        config_path = OUTPUT_ROOT / f"{name}.yaml"
+        output_dir = str(OUTPUT_ROOT / name)
+        config_path = str(OUTPUT_ROOT / f"{name}.yaml")
 
         log.info("=" * 70)
         log.info("Processing: %s", input_path)
@@ -78,25 +82,18 @@ def main() -> None:
         log.info("  config_path : %s", config_path)
         log.info("=" * 70)
 
-        if config_path.exists():
-            # Subsequent run: rebuild from existing config
-            log.info("Config exists -- running ingest()")
-            written = ingest(config_path=str(config_path))
-        else:
-            # First run: detect, generate config, build
-            log.info("No config -- running init()")
-            init(
-                input_path=input_path,
-                output_dir=str(output_dir),
-                config_path=str(config_path),
-                run_immediately=True,
-            )
-            written = []  # init logs its own output
+        # open() is idempotent: skips build if outputs already exist.
+        # Pass force=True to always rebuild.
+        ds = fn_dg6_ingest.open(
+            input_path,
+            output_dir=output_dir,
+            config_path=config_path,
+            force=force,
+        )
 
-        if written:
-            log.info("Written files:")
-            for p in written:
-                log.info("  %s", p)
+        info = ds.describe()
+        for t_name, (rows, cols) in info.shape.items():
+            log.info("  Table '%s': %s rows x %d cols", t_name, f"{rows:,}", cols)
 
         log.info("Done: %s\n", name)
 
