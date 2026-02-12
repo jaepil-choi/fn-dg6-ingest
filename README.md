@@ -21,7 +21,7 @@ DataGuide 6 업데이트를 계기로, **내보낸 파일만 넣으면 정제된
 
 ```bash
 # 아직 PyPI에 배포되지 않았으므로 저장소를 클론하여 설치합니다.
-git clone https://github.com/youruser/fn-dg6-ingest.git
+git clone https://github.com/jaepil-choi/fn-dg6-ingest.git
 cd fn-dg6-ingest
 
 # uv 사용 (권장)
