@@ -1,35 +1,17 @@
 [project]
 name = "fn-dg6-ingest"
-version = "0.1.0"
-description = "Ingest and normalize FnGuide DataGuide 6 exports (CSV/Excel) into clean relational tables."
+version = "0.1.1"
+description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
-license = "MIT"
-authors = [
-    { name = "Jae Choi", email = "chljeffreyz@gmail.com" },
-]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Financial and Insurance Industry",
-    "Programming Language :: Python :: 3",
-    "Topic :: Office/Business :: Financial",
-]
-
+requires-python = ">=3.11"
 dependencies = [
     "openpyxl>=3.1.5",
     "pandas>=3.0.0",
     "pyarrow>=23.0.0",
     "pydantic>=2.12.5",
+    "pytest>=9.0.2",
     "pyyaml>=6.0.3",
 ]
-
-[dependency-groups]
-dev = [
-    "pytest>=9.0.2",
-]
-
-[project.urls]
-Repository = "https://github.com/youruser/fn-dg6-ingest"
 
 [build-system]
 requires = ["hatchling"]
